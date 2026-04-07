@@ -43,6 +43,8 @@ def _score_blocks_qa(
     input_text, model, tokenizer, allowed_token_ids,
     logits_processor, key_token_id, mode: str, measure: str,
     lm_heads: Optional[dict] = None,
+    use_wandb: bool = False,
+    sample_idx: int = 0,
 ) -> list:
     """
     Compute the chosen metric at each block for one QA sample.
@@ -74,6 +76,7 @@ def _score_blocks_qa(
 
     # Steps 3–4: probe each block with lm_head and compute metric
     block_scores = []
+    block_probs_list = []  # store for wandb logging
     for block_idx, block_outputs in block_outputs_all.items():
         if not block_outputs:
             continue
@@ -100,12 +103,29 @@ def _score_blocks_qa(
             allowed_token_ids, key_token_id
         )
         block_scores.append(score)
+        block_probs_list.append((block_idx, block_probs))
         print(f"  [SSN._score_qa] block {block_idx}: "
               f"probs(allowed)={[round(float(p),4) for p in block_probs]}  score={round(score,4)}")
 
     target_allowed = [round(float(target_probs[i]), 4) for i in allowed_token_ids]
     print(f"  [SSN._score_qa] target(allowed)={target_allowed}  "
           f"all_scores={[round(s,4) for s in block_scores]}")
+
+    if use_wandb:
+        import wandb
+        n_opts = len(allowed_token_ids)
+        opt_cols = [f"opt_{i}_prob" for i in range(n_opts)]
+        columns = ["block"] + opt_cols + ["metric"]
+        rows = []
+        for (block_idx, block_probs), score in zip(block_probs_list, block_scores):
+            rows.append([block_idx] + block_probs.tolist() + [score])
+        target_norm = np.array([target_probs[i] for i in allowed_token_ids])
+        target_norm = target_norm / (target_norm.sum() + 1e-10)
+        rows.append(["target"] + target_norm.tolist() + [float("nan")])
+        wandb.log({
+            f"ssn_detail/sample_{sample_idx}": wandb.Table(columns=columns, data=rows)
+        }, step=sample_idx)
+
     return block_scores
 
 
@@ -173,6 +193,7 @@ def rank_blocks(
     n_samples: int = 1024,
     lm_head_type: str = "frozen",
     lm_head_ckpt_dir: Optional[str] = None,
+    use_wandb: bool = False,
 ) -> np.ndarray:
     """
     Rank model blocks by SSN fluctuation score.
@@ -236,7 +257,8 @@ def rank_blocks(
                 prepare_input(example, tokenizer, prefix, postfix)
             block_scores = _score_blocks_qa(
                 inputs, model, tokenizer, allowed_token_ids,
-                logits_processor, key_token_id, mode, measure, lm_heads
+                logits_processor, key_token_id, mode, measure, lm_heads,
+                use_wandb=use_wandb, sample_idx=valid_rows,
             )
         else:  # text_generation
             text = prepare_input(example, tokenizer, prefix, postfix)
@@ -248,6 +270,13 @@ def rank_blocks(
 
         print(f"[SSN] sample {valid_rows} block_scores ({len(block_scores)} blocks): "
               f"{[round(s, 4) for s in block_scores]}")
+
+        if use_wandb:
+            import wandb
+            log_dict = {f"ssn/block_{start_block + i}": block_scores[i]
+                        for i in range(len(block_scores))}
+            log_dict["ssn/sample"] = valid_rows
+            wandb.log(log_dict, step=valid_rows)
 
         torch.cuda.empty_cache()
 
@@ -266,6 +295,18 @@ def rank_blocks(
     # Step 4: average over samples
     avg_fluctuations = np.mean(block_fluctuations, axis=1)
     print("Average block fluctuations:", avg_fluctuations)
+
+    if use_wandb:
+        import wandb
+        wandb.log({
+            "ssn/avg_fluctuation": wandb.plot.bar(
+                wandb.Table(
+                    columns=["block", "avg_fluctuation"],
+                    data=[[i, float(avg_fluctuations[i])] for i in range(n_blocks)],
+                ),
+                "block", "avg_fluctuation", title="SSN: Avg Fluctuation per Block",
+            )
+        })
 
     # Step 5: sort by ascending fluctuation (most prunable first)
     if mode == "latter":

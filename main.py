@@ -52,6 +52,7 @@ Arguments:
 
 import argparse
 import gc
+import json
 import os
 
 import torch
@@ -116,6 +117,8 @@ def parse_args():
     parser.add_argument("--lm_head_ckpt_dir", type=str, default=None,
                         help="Directory of per-layer lm_head checkpoints "
                              "(required when --lm_head_type trained).")
+    parser.add_argument("--wandb", action="store_true",
+                        help="Enable Weights & Biases logging.")
     return parser.parse_args()
 
 
@@ -129,6 +132,17 @@ def main():
     abbr = MEASURE_ABBR[args.measure]
     model_tag = _model_tag(args.model_name)
     mode_tag = args.mode[0].upper()
+
+    # ------------------------------------------------------------------
+    # wandb init
+    # ------------------------------------------------------------------
+    if args.wandb:
+        import wandb
+        wandb.init(
+            project="tabp",
+            name=f"{args.method}_{abbr}_{model_tag}_{args.mode}",
+            config=vars(args),
+        )
 
     # ------------------------------------------------------------------
     # Step 1: Load dataset, model, and rank layers
@@ -157,6 +171,7 @@ def main():
             n_samples=args.n_samples,
             lm_head_type=args.lm_head_type,
             lm_head_ckpt_dir=args.lm_head_ckpt_dir,
+            use_wandb=args.wandb,
         )
     else:  # ddf
         sorted_blocks = rank_blocks_ddf(
@@ -173,11 +188,19 @@ def main():
             n_samples=args.n_samples,
             n_windows=args.n_windows,
             n_steps=args.n_steps,
+            use_wandb=args.wandb,
         )
 
     del model
     gc.collect()
     torch.cuda.empty_cache()
+
+    if args.wandb:
+        import wandb
+        wandb.log({"ranking/sorted_blocks": wandb.Table(
+            columns=["rank", "block_idx"],
+            data=[[i, int(b)] for i, b in enumerate(sorted_blocks)],
+        )})
 
     # ------------------------------------------------------------------
     # Step 2: Iterative pruning & evaluation
@@ -227,9 +250,36 @@ def main():
                 output_base_path=score_dir,
             )
 
+        if args.wandb:
+            import wandb
+            wandb_metrics = {"eval/n_prune": n_prune}
+            ppl_path = os.path.join(score_dir, "ppl.csv")
+            if os.path.exists(ppl_path):
+                import csv
+                with open(ppl_path) as f:
+                    rows = list(csv.reader(f))
+                    for k, v in zip(rows[0], rows[1]):
+                        try:
+                            wandb_metrics[f"eval/{k}"] = float(v)
+                        except ValueError:
+                            pass
+            acc_path = os.path.join(score_dir, "zeroshot_acc.json")
+            if os.path.exists(acc_path):
+                with open(acc_path) as f:
+                    acc_data = json.load(f)
+                for task, res in acc_data.get("results", {}).items():
+                    for metric, val in res.items():
+                        if isinstance(val, (int, float)):
+                            wandb_metrics[f"eval/{task}/{metric}"] = val
+            wandb.log(wandb_metrics)
+
         del model
         gc.collect()
         torch.cuda.empty_cache()
+
+    if args.wandb:
+        import wandb
+        wandb.finish()
 
 
 if __name__ == "__main__":

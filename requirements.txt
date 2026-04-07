@@ -12,3 +12,4 @@ huggingface-hub==0.24.6
 tokenizers==0.19.1
 tqdm==4.66.5
 pandas==2.2.2
+wandb

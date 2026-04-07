@@ -157,6 +157,7 @@ def rank_blocks(
     n_samples: int = 1024,
     n_windows: int = 32,
     n_steps: int = 32,
+    use_wandb: bool = False,
 ) -> np.ndarray:
     """
     Rank model blocks by DDF score.
@@ -230,6 +231,13 @@ def rank_blocks(
             print(f"[DDF] sample {total_steps} block_scores ({len(block_scores)} blocks): "
                   f"{[round(s, 4) for s in block_scores]}")
 
+            if use_wandb:
+                import wandb
+                log_dict = {f"ddf/block_{start_block + i}": block_scores[i]
+                            for i in range(len(block_scores))}
+                log_dict["ddf/sample"] = total_steps
+                wandb.log(log_dict, step=total_steps)
+
             # Count directional shifts between adjacent blocks
             for i in range(1, len(block_scores)):
                 delta = block_scores[i] - block_scores[i - 1]
@@ -283,6 +291,18 @@ def rank_blocks(
         block_ddf /= total_steps
 
     print("Block DDF scores:", block_ddf)
+
+    if use_wandb:
+        import wandb
+        wandb.log({
+            "ddf/block_scores": wandb.plot.bar(
+                wandb.Table(
+                    columns=["block", "ddf_score"],
+                    data=[[i, float(block_ddf[i])] for i in range(n_blocks)],
+                ),
+                "block", "ddf_score", title="DDF: Block Scores",
+            )
+        })
 
     # Sort by ascending DDF (most prunable first).
     # In 'latter' mode exclude the first half (fixed blocks) from the prunable set.
