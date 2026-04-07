@@ -7,7 +7,6 @@ import time
 
 import numpy as np
 import torch
-from lm_eval.LLMPruner.peft import PeftModel
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -94,6 +93,7 @@ def get_model(
         model = pruned_dict["model"]
         tokenizer = pruned_dict["tokenizer"]
         if model_type == "tune_pruneLLM":
+            from peft import PeftModel
             model = PeftModel.from_pretrained(
                 model, lora_ckpt, torch_dtype=torch.float16, low_cpu_mem_usage=True
             )
