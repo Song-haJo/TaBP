@@ -28,7 +28,7 @@ _CITATION = """
 
 class ARCEasy(MultipleChoiceTask):
     VERSION = 0
-    DATASET_PATH = "ai2_arc"
+    DATASET_PATH = "allenai/ai2_arc"  # PATCHED
     DATASET_NAME = "ARC-Easy"
 
     def has_training_docs(self):
@@ -75,5 +75,5 @@ class ARCEasy(MultipleChoiceTask):
 
 
 class ARCChallenge(ARCEasy):
-    DATASET_PATH = "ai2_arc"
+    DATASET_PATH = "allenai/ai2_arc"  # PATCHED
     DATASET_NAME = "ARC-Challenge"

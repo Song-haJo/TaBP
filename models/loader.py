@@ -28,7 +28,7 @@ class ForcedTokenLogitsProcessor(LogitsProcessor):
         return scores + mask
 
 
-def load_model(model_path: str, use_cache: bool = False, torch_dtype: str = "auto"):
+def load_model(model_path: str, use_cache: bool = True, torch_dtype: str = "float16"):  # PATCHED: match clean (fp16 default, use_cache=True)
     """
     Load a causal LM and its tokenizer from HuggingFace Hub or a local path.
 

@@ -64,7 +64,7 @@ def _prepare_wikitext(example, tokenizer, prefix: str, postfix: str):
 #            "text_generation" → sliding window + autoregressive generation
 _DATASET_REGISTRY = {
     "arc_easy": {
-        "hf_name": "ai2_arc",
+        "hf_name": "allenai/ai2_arc",
         "hf_config": "ARC-Easy",
         "split": "train",
         "task_type": "qa",

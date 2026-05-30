@@ -25,7 +25,7 @@ def forward_with_hooks(input_ids, model, mode: str, logits_processor=None):
 
     def _hook(layer_num):
         def fn(module, inp, out):
-            outputs_all_layers[layer_num].append(out[0].detach())
+            outputs_all_layers[layer_num].append(out[0].detach().cpu())  # PATCHED: match clean
         return fn
 
     hooks = [

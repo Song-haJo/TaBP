@@ -65,15 +65,8 @@ from lm_eval.eval_ppl import eval_ppl, generate_txt
 from lm_eval.eval_zeroshot_acc import eval_acc
 
 
-TASK_LIST = [
-    "arc_easy",
-    "arc_challenge",
-    "boolq",
-    "hellaswag",
-    "piqa",
-    "copa",
-    "winogrande",
-]
+# PATCHED: SMOKE_TASKS env overrides task list (default keeps original 7)
+TASK_LIST = os.environ.get("SMOKE_TASKS", "arc_easy,arc_challenge,boolq,hellaswag,piqa,copa,winogrande").split(",")
 
 PREFIX = "Answer the following multiple choice question by giving the most appropriate response.\n"
 POSTFIX = "Answer: "
@@ -219,9 +212,11 @@ def main():
         model, tokenizer = load_model(args.model_name)
         prune_layers(model, layers_to_prune)
 
-        # Perplexity (wikitext2 + ptb)
-        if not (os.path.exists(os.path.join(score_dir, "ppl.csv"))
-                or os.path.exists(os.path.join(score_dir, "ppl_bos.csv"))):
+        # PATCHED: SMOKE_SKIP_PPL=1 / SMOKE_SKIP_GEN=1 skip heavy steps
+        if os.environ.get("SMOKE_SKIP_PPL", "0") != "1" and not (
+            os.path.exists(os.path.join(score_dir, "ppl.csv"))
+            or os.path.exists(os.path.join(score_dir, "ppl_bos.csv"))
+        ):
             for add_bos in [True, False]:
                 eval_ppl(
                     output_dir=score_dir,
@@ -232,7 +227,9 @@ def main():
                 )
 
         # Text generation sample
-        if not os.path.exists(os.path.join(score_dir, "gen_text.txt")):
+        if os.environ.get("SMOKE_SKIP_GEN", "0") != "1" and not os.path.exists(
+            os.path.join(score_dir, "gen_text.txt")
+        ):
             generate_txt(output_dir=score_dir, model=model,
                          tokenizer=tokenizer, device="cuda")
 
@@ -244,7 +241,7 @@ def main():
                 batch_size=1,
                 max_batch_size=1,
                 output_json=os.path.join(score_dir, "zeroshot_acc.json"),
-                limit_fixed=99999999,
+                limit_fixed=int(os.environ.get("SMOKE_TASK_LIMIT", "99999999")),  # PATCHED
                 no_cache=False,
                 write_out=True,
                 output_base_path=score_dir,

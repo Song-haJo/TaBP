@@ -61,9 +61,9 @@ def _score_blocks_qa(
         input_ids, model, mode, logits_processor
     )
 
-    # Step 2: final-layer logits as target
+    # Step 2: final-layer logits as target (PATCHED: no .float() — keep fp16 like clean)
     final_logits = outputs.scores[-1]
-    target_probs = F.softmax(final_logits, dim=-1).float().detach().cpu().numpy()[0]
+    target_probs = F.softmax(final_logits, dim=-1).detach().cpu().numpy()[0]
 
     # Steps 3–4: probe each block with the model's own lm_head and compute metric
     block_scores = []
@@ -72,16 +72,25 @@ def _score_blocks_qa(
             continue
 
         block_output = block_outputs[-1]
-        if block_output.dim() == 2:
-            block_output = block_output.unsqueeze(0)
-
+        # PATCHED: do NOT unsqueeze; match clean's dim-based slicing exactly
         with torch.no_grad():
             lm_head_device = next(model.lm_head.parameters()).device
             block_logits = model.lm_head(block_output.to(lm_head_device))
 
-        logits = F.softmax(block_logits[:, -1, :], dim=-1).float().detach().cpu().numpy()[0]
-        block_probs_raw = logits[allowed_token_ids]
-        block_probs = block_probs_raw / (block_probs_raw.sum() + 1e-10)
+        # PATCHED: replicate clean's branch on dim (2D → [0,:], 3D → [:,-1,:])
+        if block_logits.dim() == 3:
+            mask = torch.full_like(block_logits[:, -1, :], -float('inf')).to(block_logits.device)
+            mask[:, allowed_token_ids] = 0
+            masked_logits = block_logits[:, -1, :] + mask
+            logits = F.softmax(masked_logits, dim=-1).detach().cpu().numpy()[0]
+        elif block_logits.dim() == 2:
+            mask = torch.full_like(block_logits[0, :], -float('inf')).to(block_logits.device)
+            mask[allowed_token_ids] = 0
+            masked_logits = block_logits[0, :] + mask
+            logits = F.softmax(masked_logits, dim=-1).detach().cpu().numpy()
+        else:
+            raise ValueError(f"Unexpected block_logits dim: {block_logits.dim()}")
+        block_probs = logits[allowed_token_ids]
 
         score = compute_metric(
             measure, block_probs, target_probs, logits,
@@ -241,7 +250,8 @@ def rank_blocks(
             # Count directional shifts between adjacent blocks
             for i in range(1, len(block_scores)):
                 delta = block_scores[i] - block_scores[i - 1]
-                if alpha * delta > 0:
+                # PATCHED: count UNDESIRABLE shifts (penalty), matching clean's argsort(-penalty)
+                if alpha * delta < 0:
                     block_ddf[start_block + i] += 1
 
             total_steps += 1
@@ -304,14 +314,5 @@ def rank_blocks(
             )
         })
 
-    # Sort by ascending DDF (most prunable first).
-    # In 'latter' mode exclude the first half (fixed blocks) from the prunable set.
-    if mode == "latter":
-        mid_point = n_blocks // 2 + 1
-        fixed_blocks = list(range(mid_point))
-        sorted_latter = np.argsort(block_ddf)
-        sorted_latter = [b for b in sorted_latter if b not in fixed_blocks]
-        sorted_blocks = np.concatenate((fixed_blocks, sorted_latter))
-        return sorted_blocks[len(sorted_blocks) // 2 + 1:]
-    else:
-        return np.argsort(block_ddf)[1:]
+    # PATCHED: match clean exactly — argsort(-penalty) over ALL blocks (descending)
+    return np.argsort(-block_ddf)
