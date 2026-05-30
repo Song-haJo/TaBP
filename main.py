@@ -107,8 +107,9 @@ def parse_args():
     parser.add_argument("--n_steps", type=int, default=32,
                         help="DDF: generation steps per window (default: 32)")
     parser.add_argument("--prune_counts", type=int, nargs="+",
-                        default=[1, 3, 5, 6, 7],
-                        help="Layer counts to prune and evaluate")
+                        default=[2, 4, 8],
+                        help="Layer counts to prune and evaluate "
+                             "(default matches paper's main results: k=2,4,8)")
     parser.add_argument("--lm_head_type", type=str, default="frozen",
                         choices=["frozen", "trained"],
                         help="SSN only. 'frozen': use model's own lm_head (default). "

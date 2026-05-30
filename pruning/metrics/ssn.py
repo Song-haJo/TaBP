@@ -94,12 +94,14 @@ def _score_blocks_qa(
                 lm_head_device = next(model.lm_head.parameters()).device
                 block_logits = model.lm_head(block_output.to(lm_head_device))
 
-        logits = F.softmax(block_logits[:, -1, :], dim=-1).float().detach().cpu().numpy()[0]
-        block_probs_raw = logits[allowed_token_ids]
+        # PATCHED: preserve RAW logits — compute_cross_entropy expects raw, not probs.
+        raw_logits_np = block_logits[:, -1, :].float().detach().cpu().numpy()[0]
+        probs = F.softmax(block_logits[:, -1, :], dim=-1).float().detach().cpu().numpy()[0]
+        block_probs_raw = probs[allowed_token_ids]
         block_probs = block_probs_raw / (block_probs_raw.sum() + 1e-10)
 
         score = compute_metric(
-            measure, block_probs, target_probs, logits,
+            measure, block_probs, target_probs, raw_logits_np,  # PATCHED: raw logits
             allowed_token_ids, key_token_id
         )
         block_scores.append(score)

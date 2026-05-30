@@ -78,22 +78,26 @@ def _score_blocks_qa(
             block_logits = model.lm_head(block_output.to(lm_head_device))
 
         # PATCHED: replicate clean's branch on dim (2D → [0,:], 3D → [:,-1,:])
+        # Also preserve RAW logits to pass into compute_metric (the cross_entropy
+        # branch expects raw logits — passing softmaxed probs gives double softmax).
         if block_logits.dim() == 3:
+            raw_logits_np = block_logits[:, -1, :].detach().cpu().numpy()[0]
             mask = torch.full_like(block_logits[:, -1, :], -float('inf')).to(block_logits.device)
             mask[:, allowed_token_ids] = 0
             masked_logits = block_logits[:, -1, :] + mask
-            logits = F.softmax(masked_logits, dim=-1).detach().cpu().numpy()[0]
+            probs = F.softmax(masked_logits, dim=-1).detach().cpu().numpy()[0]
         elif block_logits.dim() == 2:
+            raw_logits_np = block_logits[0, :].detach().cpu().numpy()
             mask = torch.full_like(block_logits[0, :], -float('inf')).to(block_logits.device)
             mask[allowed_token_ids] = 0
             masked_logits = block_logits[0, :] + mask
-            logits = F.softmax(masked_logits, dim=-1).detach().cpu().numpy()
+            probs = F.softmax(masked_logits, dim=-1).detach().cpu().numpy()
         else:
             raise ValueError(f"Unexpected block_logits dim: {block_logits.dim()}")
-        block_probs = logits[allowed_token_ids]
+        block_probs = probs[allowed_token_ids]
 
         score = compute_metric(
-            measure, block_probs, target_probs, logits,
+            measure, block_probs, target_probs, raw_logits_np,  # PATCHED: raw logits, not probs
             allowed_token_ids, key_token_id
         )
         block_scores.append(score)
@@ -140,11 +144,12 @@ def _score_blocks_text_gen(
             lm_head_device = next(model.lm_head.parameters()).device
             block_logits = model.lm_head(block_output.to(lm_head_device))
 
-        logits = F.softmax(block_logits[:, -1, :], dim=-1).float().detach().cpu().numpy()[0]
-        allowed_token_ids = list(range(len(logits)))
+        raw_logits_np = block_logits[:, -1, :].float().detach().cpu().numpy()[0]  # PATCHED: keep raw
+        probs = F.softmax(block_logits[:, -1, :], dim=-1).float().detach().cpu().numpy()[0]
+        allowed_token_ids = list(range(len(probs)))
 
         score = compute_metric(
-            measure, logits, target_probs, logits,
+            measure, probs, target_probs, raw_logits_np,  # PATCHED: raw logits to logits arg
             allowed_token_ids, key_token_id=0,
         )
         block_scores.append(score)
